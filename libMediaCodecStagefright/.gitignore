@@ -1,0 +1,7 @@
+tools
+bin/
+gen/
+libs/
+obj/
+jni/libs
+jni/obj

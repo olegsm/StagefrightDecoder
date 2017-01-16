@@ -47,7 +47,6 @@
 #include <OMX_Component.h>
 
 #include <android/log.h>
-#include "codec_utils.h"
 
 #ifdef LOG_TAG
 #undef LOG_TAG
@@ -69,7 +68,7 @@
 #define ATTRIBUTE_PUBLIC __attribute__ ((visibility ("default")))
 #endif
 
-#define LOG_TAG "[OMX Stagefright]"
+#define LOG_TAG "[Stagefright]"
 
 #if !defined(NDEBUG)
 #define DEBUG_CODEC
@@ -101,11 +100,11 @@
 
 #define IN_BUFFER_COUNT 4
 #define OUT_BUFFER_COUNT 10
-//#define DECODER_PRIORITY ANDROID_PRIORITY_AUDIO
 #define DECODER_PRIORITY ANDROID_PRIORITY_NORMAL
 
-// DEBUG
-static int g_frameCount = 0;
+#define ANNEXB_STARTCODE 0x01000000
+#define NAL_SPS    7
+#define NAL_PPS    8
 
 using namespace android;
 
@@ -113,8 +112,8 @@ typedef Vector<MediaBuffer*> MediaBufferQueue;
 
 const int OMX_QCOM_COLOR_FormatYVU420PackedSemiPlanar32m4ka = 0x7FA30C01;
 const int QOMX_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka = 0x7fa30c03; // Sony
-const int OMX_QCOM_COLOR_FormatYVU420SemiPlanar = 0x7FA30C00;
-const int OMX_TI_COLOR_FormatYUV420PackedSemiPlanar = 0x7F000100;
+//const int OMX_QCOM_COLOR_FormatYVU420SemiPlanar = 0x7FA30C00;
+//const int OMX_TI_COLOR_FormatYUV420PackedSemiPlanar = 0x7F000100;
 const int COLOR_TI_FormatYUV420PackedSemiPlanarInterlaced = 0x7f000001;
 const int OMX_STE_COLOR_FormatYUV420PackedSemiPlanarMB = 0x7fa00000;
 const int OMX_DIRECT_RENDERING = 0x100;
@@ -135,6 +134,75 @@ const int HAL_PIXEL_FORMAT_YCBCR42XMBN = 0xE;
 
 // default fps=25
 static int s_frameDisplayTimeMsec = 40;
+
+inline uint16_t ntoh2(uint16_t in)
+{
+    return (in >> 8) | (in << 8);
+}
+
+inline uint32_t ntoh4(uint32_t in)
+{
+    return ((in >> 24) & 0xFF) | (((in >> 16) & 0xFF) << 8) | (((in >> 8) & 0xFF) << 16) | ((in & 0xFF) << 24);
+}
+
+inline const uint8_t* getNALFromFrame(int nalType, const uint8_t *buf, int buf_size, int *nalLen)
+{
+    if (buf_size <= 4)
+        return 0;
+
+    int init_size = buf_size;
+    int nal_type = 0;
+
+    if (*((uint32_t*) buf) == ANNEXB_STARTCODE) {
+        while (buf_size > 4) {
+            if (*((uint32_t*) buf) == ANNEXB_STARTCODE) {
+                nal_type = buf[4] & 0x1f;
+                buf += 5;
+                buf_size -= 5;
+                if (nal_type == nalType) {
+                    const uint8_t *end = buf;
+                    buf -= 5;
+                    if (nalLen) {
+                        int end_size = buf_size;
+                        while (end_size > 0) {
+                            if (*((uint32_t*) end) == ANNEXB_STARTCODE) {
+                                break;
+                            } else {
+                                end++;
+                                end_size--;
+                            }
+                        }
+                        *nalLen = end - buf;
+                    }
+                    return buf;
+                }
+            } else {
+                buf++;
+                buf_size--;
+            }
+            if (init_size - buf_size > 60)
+                break;
+        }
+    } else {
+        int32_t nalSize = 0;
+        while (buf_size > 4) {
+            nalSize = ntoh4(*((uint32_t*) buf));
+            nal_type = buf[4] & 0x1f;
+
+            if (nalSize < 1)
+                break;
+
+            if (nal_type == nalType && (nalSize + 4) <= buf_size) {
+                if (nalLen)
+                    *nalLen = nalSize + 4;
+                return buf;
+            }
+            buf += 4 + nalSize;
+            buf_size -= 4 + nalSize;
+        }
+    }
+    return 0;
+}
 
 typedef struct {
     int pixel_format;
@@ -1665,10 +1733,10 @@ status_t MediaStreamSource::read(MediaBuffer** buffer,
 #if 0
             LOGV("[MediaStreamSource] NEW INPUT FRAME: \
 flags=%d, frameSize=%d, time=%lld, range_offset=%d, \
-range_length=%d, refs=%d, ret=%d, buffer=%p, FRAME=%d",
+range_length=%d, refs=%d, ret=%d, buffer=%p",
                     frame.mFlags, frame.mSize, frame.mPts,
                     (*buffer)->range_offset(), (*buffer)->range_length(),
-                    (*buffer)->refcount(), status, *buffer, g_frameCount++);
+                    (*buffer)->refcount(), status, *buffer);
 #endif
         }
     }

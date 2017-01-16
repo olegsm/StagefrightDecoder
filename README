@@ -1,0 +1,13 @@
+README libMeidiaCodecStagefright
+===============================
+AUTHORS: Oleg Smirnov
+
+This is wrapper of internal MediaCodec implementtaion from AOSP.
+
+Always use MediaCodec from SDK in your projects.
+If you have any unsolving problem with MediaCodec on another device,
+you can use this library.
+
+This library has many hacks and tricks via linking with private libraries.
+
+Compilation: ./build.sh armeabi /PATH_TO_YOUR_NDK_ROOT_DIR/
